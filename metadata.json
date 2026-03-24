@@ -1,0 +1,7 @@
+{
+  "name": "SC Valentes",
+  "description": "Gestão completa de peladas de futebol amador com sistema de avaliação de jogadores, formação de times equilibrados e rankings de desempenho.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
