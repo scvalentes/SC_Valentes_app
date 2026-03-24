@@ -9,10 +9,21 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
+// Prevent crash if variables are missing, but log the error
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error("ERRO CRÍTICO: SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não configuradas!");
+}
+
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 const app = express();
 app.use(express.json());
+
+// Middleware para logar todas as requisições (ajuda no debug da Vercel)
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.path}`);
+  next();
+});
 
 // --- API ROUTES ---
 
@@ -75,8 +86,15 @@ app.post("/api/users", async (req, res) => {
   if (!password || password.length < 4) return res.status(400).json({ error: "A senha deve ter no mínimo 4 caracteres." });
 
   try {
+    console.log("Tentando criar usuário:", username);
     const hashedPassword = await bcrypt.hash(password, 10);
-    const { count } = await supabase.from("users").select("*", { count: 'exact', head: true });
+    const { count, error: countError } = await supabase.from("users").select("*", { count: 'exact', head: true });
+    
+    if (countError) {
+      console.error("Erro ao contar usuários no Supabase:", countError);
+      throw countError;
+    }
+
     const role = (count === 0) ? 'manager' : 'player';
 
     const { data, error } = await supabase
@@ -85,10 +103,16 @@ app.post("/api/users", async (req, res) => {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error("Erro ao inserir usuário no Supabase:", error);
+      throw error;
+    }
+    
+    console.log("Usuário criado com sucesso!");
     res.status(201).json({ ...data, match_count: 0, rating_count: 0 });
-  } catch (e) {
-    res.status(400).json({ error: "Erro ao criar usuário. O nome de usuário já pode estar em uso." });
+  } catch (e: any) {
+    console.error("Erro interno no servidor (POST /api/users):", e);
+    res.status(500).json({ error: "Erro interno no servidor", details: e.message || String(e) });
   }
 });
 
