@@ -34,7 +34,7 @@ type User = {
   position: string;
   level: number | null;
   photo_url: string;
-  role: 'player' | 'manager';
+  role: 'player' | 'manager' | 'scout';
   match_count: number;
   rating_count: number;
 };
@@ -65,7 +65,7 @@ export default function App() {
   const [showChat, setShowChat] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [authorizedUsers, setAuthorizedUsers] = useState<User[]>([]);
-  const [managerTab, setManagerTab] = useState<"requests" | "authorized">("requests");
+  const [managerTab, setManagerTab] = useState<"requests" | "all-users">("requests");
 
   const finishMatch = async (matchId: string) => {
     await fetch(`/api/matches/${matchId}/finish`, { method: "POST" });
@@ -695,14 +695,14 @@ export default function App() {
                   {managerTab === "requests" && <motion.div layoutId="tab" className="absolute bottom-0 left-0 w-full h-0.5 bg-primary" />}
                 </button>
                 <button 
-                  onClick={() => setManagerTab("authorized")}
+                  onClick={() => setManagerTab("all-users")}
                   className={cn(
                     "px-4 py-2 font-bold text-sm transition-all relative",
-                    managerTab === "authorized" ? "text-primary" : "text-slate-500 hover:text-slate-700"
+                    managerTab === "all-users" ? "text-primary" : "text-slate-500 hover:text-slate-700"
                   )}
                 >
-                  Jogadores Autorizados ({authorizedUsers.length})
-                  {managerTab === "authorized" && <motion.div layoutId="tab" className="absolute bottom-0 left-0 w-full h-0.5 bg-primary" />}
+                  Todos os Usuários ({users.length})
+                  {managerTab === "all-users" && <motion.div layoutId="tab" className="absolute bottom-0 left-0 w-full h-0.5 bg-primary" />}
                 </button>
               </div>
 
@@ -746,61 +746,71 @@ export default function App() {
                 </div>
               ) : (
                 <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
-                      <tr>
-                        <th className="px-6 py-4 font-medium">Jogador</th>
-                        <th className="px-6 py-4 font-medium">Posição</th>
-                        <th className="px-6 py-4 font-medium">Autorizado em</th>
-                        <th className="px-6 py-4 font-medium text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {authorizedUsers.map(user => (
-                        <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
-                              <img src={user.photo_url} className="w-8 h-8 rounded-full" />
-                              <div>
-                                <div className="font-bold text-slate-900">{user.nickname}</div>
-                                <div className="text-xs text-slate-500">{user.name}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">{user.position}</td>
-                          <td className="px-6 py-4 text-sm text-slate-400">
-                            {new Date(user.authorized_at).toLocaleDateString('pt-BR')}
-                          </td>
-                          <td className="px-6 py-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button 
-                                onClick={() => toggleScoutRole(user.id, user.role || 'player')}
-                                className={cn(
-                                  "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors",
-                                  user.role === 'scout' 
-                                    ? "bg-secondary text-white hover:bg-secondary/90" 
-                                    : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                                )}
-                                title={user.role === 'scout' ? "Remover cargo de Olheiro" : "Tornar Olheiro"}
-                              >
-                                {user.role === 'scout' ? "Olheiro" : "Tornar Olheiro"}
-                              </button>
-                              <button 
-                                onClick={() => revokeAuthorization(user.id)}
-                                className="p-2 text-slate-400 hover:text-secondary transition-colors"
-                                title="Remover Autorização"
-                              >
-                                <Trash2 className="w-5 h-5" />
-                              </button>
-                            </div>
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+                        <tr>
+                          <th className="px-6 py-4 font-medium">Jogador</th>
+                          <th className="px-6 py-4 font-medium">Posição</th>
+                          <th className="px-6 py-4 font-medium">Cargo</th>
+                          <th className="px-6 py-4 font-medium text-right">Ações</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {authorizedUsers.length === 0 && (
-                    <div className="p-12 text-center text-slate-500">Nenhum jogador autorizado ainda.</div>
-                  )}
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {users.map(user => (
+                          <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <img src={user.photo_url} className="w-8 h-8 rounded-full" />
+                                <div>
+                                  <div className="font-bold text-slate-900">{user.nickname}</div>
+                                  <div className="text-xs text-slate-500">{user.name}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">{user.position}</td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "text-[10px] font-bold uppercase px-2 py-1 rounded-full",
+                                user.role === 'manager' ? "bg-primary/10 text-primary" :
+                                user.role === 'scout' ? "bg-secondary/10 text-secondary" :
+                                "bg-slate-100 text-slate-500"
+                              )}>
+                                {user.role === 'manager' ? "Gestor" : user.role === 'scout' ? "Olheiro" : "Jogador"}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {user.role !== 'manager' && (
+                                  <>
+                                    <button 
+                                      onClick={() => toggleScoutRole(user.id, user.role)}
+                                      className={cn(
+                                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors border",
+                                        user.role === 'scout' 
+                                          ? "bg-secondary text-white border-secondary hover:bg-secondary/90" 
+                                          : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                                      )}
+                                      title={user.role === 'scout' ? "Tirar Olheiro" : "Tornar Olheiro"}
+                                    >
+                                      {user.role === 'scout' ? "Tirar Olheiro" : "Tornar Olheiro"}
+                                    </button>
+                                    <button 
+                                      onClick={() => deleteUser(user.id)}
+                                      className="p-2 text-slate-400 hover:text-secondary transition-colors"
+                                      title="Excluir Cadastro"
+                                    >
+                                      <Trash2 className="w-5 h-5" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </motion.div>

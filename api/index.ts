@@ -10,7 +10,8 @@ const supabaseUrl = process.env.SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 if (!supabaseUrl || !supabaseServiceKey) {
-  console.error("ERRO: Variáveis do Supabase não encontradas!");
+  console.error("⚠️ ERRO DE CONFIGURAÇÃO: As variáveis SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não foram encontradas no ambiente.");
+  console.log("👉 Para corrigir: Vá em Settings (ícone de engrenagem) > Environment Variables e adicione as chaves do Supabase.");
 }
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -103,6 +104,82 @@ app.post("/api/matches/:id/join", async (req, res) => {
   const { error } = await supabase.from("match_players").insert([{ match_id: req.params.id, user_id: userId, status }]);
   if (error) return res.status(400).json({ error: "Já está inscrito" });
   res.json({ status });
+});
+
+// --- ROTAS DO GESTOR ---
+
+app.get("/api/manager/:id/requests", async (req, res) => {
+  const { data, error } = await supabase
+    .from("match_players")
+    .select(`
+      match_id, 
+      user_id, 
+      status, 
+      matches(location, date, time), 
+      users(nickname, photo_url)
+    `)
+    .eq("status", "pending");
+  
+  if (error) return res.status(500).json({ error: error.message });
+  
+  res.json(data.map((req: any) => ({
+    match_id: req.match_id,
+    user_id: req.user_id,
+    status: req.status,
+    location: req.matches.location,
+    date: req.matches.date,
+    time: req.matches.time,
+    nickname: req.users.nickname,
+    photo_url: req.users.photo_url
+  })));
+});
+
+app.post("/api/manager/:id/approve", async (req, res) => {
+  const { userId, matchId } = req.body;
+  const { error } = await supabase
+    .from("match_players")
+    .update({ status: 'confirmed' })
+    .eq("match_id", matchId)
+    .eq("user_id", userId);
+  
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
+app.post("/api/manager/:id/reject", async (req, res) => {
+  const { userId, matchId } = req.body;
+  const { error } = await supabase
+    .from("match_players")
+    .delete()
+    .eq("match_id", matchId)
+    .eq("user_id", userId);
+  
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
+app.post("/api/manager/:id/update-role", async (req, res) => {
+  const { userId, role } = req.body;
+  const { error } = await supabase
+    .from("users")
+    .update({ role })
+    .eq("id", userId);
+  
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
+});
+
+app.delete("/api/users/:id", async (req, res) => {
+  const managerId = req.headers["x-manager-id"];
+  if (!managerId) return res.status(401).json({ error: "Não autorizado" });
+
+  // Verify if requester is manager
+  const { data: manager } = await supabase.from("users").select("role").eq("id", managerId).single();
+  if (!manager || manager.role !== 'manager') return res.status(403).json({ error: "Apenas gestores podem excluir usuários" });
+
+  const { error } = await supabase.from("users").delete().eq("id", req.params.id);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
 });
 
 // --- CONFIGURAÇÃO DE AMBIENTE ---
