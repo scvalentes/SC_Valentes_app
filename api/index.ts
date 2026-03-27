@@ -34,6 +34,7 @@ async function migrateRegistrationNumbers() {
     }
   }
 }
+
 migrateRegistrationNumbers();
 
 const app = express();
@@ -49,14 +50,29 @@ app.use((req, res, next) => {
 
 app.get("/api/users", async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const { data: usersData, error: usersError } = await supabase
       .from("users")
-      .select(`*, match_count:match_players(count), rating_count:ratings!ratings_rated_id_fkey(count)`)
+      .select(`*, rating_count:ratings!ratings_rated_id_fkey(count)`)
       .order("level", { ascending: false, nullsFirst: false });
-    if (error) throw error;
-    res.json(data.map(u => ({
+    
+    if (usersError) throw usersError;
+
+    // Fetch counts of finished matches for each user
+    const { data: matchCounts, error: countsError } = await supabase
+      .from("match_players")
+      .select(`user_id, matches!inner(status)`)
+      .eq("matches.status", "finished");
+
+    if (countsError) throw countsError;
+
+    const countsMap: Record<string, number> = {};
+    matchCounts?.forEach((mc: any) => {
+      countsMap[mc.user_id] = (countsMap[mc.user_id] || 0) + 1;
+    });
+
+    res.json(usersData.map(u => ({
       ...u,
-      match_count: u.match_count?.[0]?.count || 0,
+      match_count: countsMap[u.id] || 0,
       rating_count: u.rating_count?.[0]?.count || 0,
       goals: u.goals || 0,
       assists: u.assists || 0,
@@ -101,14 +117,27 @@ app.post("/api/users", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
   try {
-    const { data: user, error } = await supabase.from("users").select(`*, match_count:match_players(count), rating_count:ratings!ratings_rated_id_fkey(count)`).eq("username", username).single();
+    const { data: user, error } = await supabase
+      .from("users")
+      .select(`*, rating_count:ratings!ratings_rated_id_fkey(count)`)
+      .eq("username", username)
+      .single();
+    
     if (error || !user) return res.status(401).json({ error: "Usuário não encontrado" });
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) return res.status(401).json({ error: "Senha incorreta" });
+
+    // Fetch match count for finished matches
+    const { count } = await supabase
+      .from("match_players")
+      .select("match_id, matches!inner(status)", { count: 'exact', head: true })
+      .eq("user_id", user.id)
+      .eq("matches.status", "finished");
+
     const { password: _, ...userWithoutPassword } = user;
     res.json({ 
       ...userWithoutPassword, 
-      match_count: user.match_count?.[0]?.count || 0, 
+      match_count: count || 0, 
       rating_count: user.rating_count?.[0]?.count || 0,
       goals: user.goals || 0,
       assists: user.assists || 0,
@@ -148,6 +177,20 @@ app.post("/api/matches/:id/join", async (req, res) => {
   const { error } = await supabase.from("match_players").insert([{ match_id: req.params.id, user_id: userId, status }]);
   if (error) return res.status(400).json({ error: "Já está inscrito" });
   res.json({ status });
+});
+
+app.post("/api/matches/:id/finish", async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from("matches")
+      .update({ status: 'finished' })
+      .eq("id", req.params.id);
+    
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // --- ROTAS DO GESTOR ---
