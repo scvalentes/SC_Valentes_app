@@ -37,6 +37,10 @@ type User = {
   role: 'player' | 'manager' | 'scout';
   match_count: number;
   rating_count: number;
+  goals: number;
+  assists: number;
+  wins: number;
+  registration_number: number;
 };
 
 type Match = {
@@ -68,6 +72,16 @@ export default function App() {
   const [managerTab, setManagerTab] = useState<"requests" | "all-users">("requests");
   const [selectedForEvaluation, setSelectedForEvaluation] = useState<string[]>([]);
   const [evaluationPlayers, setEvaluationPlayers] = useState<User[]>([]);
+  const [gameSetup, setGameSetup] = useState<{
+    step: 'config' | 'selection' | 'pots' | 'result';
+    maxPlayers: number;
+    numTeams: number;
+    selectedPlayers: string[];
+    selectedGoalkeepers: string[];
+    teams: User[][];
+    pots: User[][];
+  } | null>(null);
+  const [viewingProfile, setViewingProfile] = useState<User | null>(null);
 
   const finishMatch = async (matchId: string) => {
     await fetch(`/api/matches/${matchId}/finish`, { method: "POST" });
@@ -182,6 +196,106 @@ export default function App() {
     } catch (error) {
       console.error("Error finishing evaluation:", error);
     }
+  };
+
+  const calculatePots = () => {
+    if (!gameSetup) return;
+    const selectedUsers = users.filter(u => gameSetup.selectedPlayers.includes(u.id));
+    
+    // Sort by level desc
+    const sorted = [...selectedUsers].sort((a, b) => (b.level ?? 0) - (a.level ?? 0));
+    
+    const potSize = gameSetup.numTeams;
+    const numPots = 6;
+    
+    const pots: User[][] = [];
+    let currentIdx = 0;
+    for (let i = 0; i < numPots; i++) {
+      const take = potSize;
+      pots.push(sorted.slice(currentIdx, currentIdx + take));
+      currentIdx += take;
+    }
+    
+    setGameSetup({ ...gameSetup, step: 'pots', pots });
+  };
+
+  const drawTeams = () => {
+    if (!gameSetup || !gameSetup.pots) return;
+    
+    const resultTeams: User[][] = Array.from({ length: gameSetup.numTeams }, () => []);
+    
+    // Distribute from pots to teams
+    gameSetup.pots.forEach(pot => {
+      const shuffledPot = [...pot].sort(() => Math.random() - 0.5);
+      shuffledPot.forEach((player, idx) => {
+        // Simple distribution: each player in the pot goes to a different team
+        // Since potSize == numTeams, we can just map them
+        if (idx < resultTeams.length) {
+          resultTeams[idx].push(player);
+        } else {
+          // Fallback for overflow if any
+          let minTeamIdx = 0;
+          for (let i = 1; i < resultTeams.length; i++) {
+            if (resultTeams[i].length < resultTeams[minTeamIdx].length) {
+              minTeamIdx = i;
+            }
+          }
+          resultTeams[minTeamIdx].push(player);
+        }
+      });
+    });
+
+    setGameSetup({ ...gameSetup, step: 'result', teams: resultTeams });
+  };
+
+  const startManualDistribution = () => {
+    if (!gameSetup) return;
+    const resultTeams: User[][] = Array.from({ length: gameSetup.numTeams }, () => []);
+    setGameSetup({ ...gameSetup, step: 'result', teams: resultTeams });
+  };
+
+  const updateStats = async (userId: string, type: 'goals' | 'assists', increment: number) => {
+    try {
+      await fetch("/api/stats/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, type, increment })
+      });
+      fetchData();
+    } catch (error) {
+      console.error("Error updating stats:", error);
+    }
+  };
+
+  const setWinner = async (teamIdx: number) => {
+    if (!gameSetup) return;
+    if (!window.confirm(`Confirmar Time ${teamIdx + 1} como vencedor da rodada?`)) return;
+    
+    const winnerIds = gameSetup.teams[teamIdx].map(u => u.id);
+    try {
+      await fetch("/api/stats/winner", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: winnerIds })
+      });
+      alert("Vitória contabilizada para todos os jogadores do time!");
+      fetchData();
+    } catch (error) {
+      console.error("Error setting winner:", error);
+    }
+  };
+
+  const movePlayer = (playerId: string, targetTeamIdx: number | null) => {
+    if (!gameSetup) return;
+    const allPlayers = users.filter(u => gameSetup.selectedPlayers.includes(u.id) || gameSetup.selectedGoalkeepers.includes(u.id));
+    const player = allPlayers.find(p => p.id === playerId);
+    if (!player) return;
+
+    const newTeams = gameSetup.teams.map(t => t.filter(p => p.id !== playerId));
+    if (targetTeamIdx !== null) {
+      newTeams[targetTeamIdx].push(player);
+    }
+    setGameSetup({ ...gameSetup, teams: newTeams });
   };
 
   const fetchData = async () => {
@@ -612,56 +726,337 @@ export default function App() {
               className="space-y-6"
             >
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-slate-900">Próximas Peladas</h2>
-                {currentUser.role === 'manager' && (
+                <h2 className="text-2xl font-bold text-slate-900">Jogo</h2>
+                {currentUser.role === 'manager' && !gameSetup && (
                   <button 
-                    onClick={() => setView("create-match")}
-                    className="bg-primary hover:opacity-90 p-2 rounded-full shadow-lg shadow-primary/20 transition-colors text-white"
+                    onClick={() => setGameSetup({ step: 'config', maxPlayers: 12, numTeams: 2, selectedPlayers: [], selectedGoalkeepers: [], teams: [], pots: [] })}
+                    className="bg-primary hover:opacity-90 px-4 py-2 rounded-lg shadow-lg shadow-primary/20 transition-colors text-white font-bold text-sm flex items-center gap-2"
                   >
-                    <Plus className="w-6 h-6" />
+                    <Plus className="w-4 h-4" />
+                    Iniciar Jogo
                   </button>
                 )}
               </div>
 
-              {matches.length === 0 ? (
-                <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center shadow-sm">
-                  <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                  <p className="text-slate-500">Nenhuma pelada marcada. Que tal criar uma?</p>
-                </div>
-              ) : (
-                <div className="grid gap-4">
-                  {matches.map(match => (
-                    <div 
-                      key={match.id}
-                      className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-primary/50 transition-all cursor-pointer group shadow-sm hover:shadow-md"
-                      onClick={() => {
-                        setSelectedMatch(match);
-                        fetchMatchPlayers(match.id);
-                        // No longer going to match-details view
-                      }}
+              {gameSetup ? (
+                <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                    <h3 className="font-bold text-lg text-slate-900">
+                      {gameSetup.step === 'config' && "Configuração do Jogo"}
+                      {gameSetup.step === 'selection' && "Selecionar Jogadores"}
+                      {gameSetup.step === 'result' && "Times e Súmula"}
+                    </h3>
+                    <button 
+                      onClick={() => setGameSetup(null)}
+                      className="text-slate-400 hover:text-secondary text-sm font-medium"
                     >
-                      <div className="flex justify-between items-start mb-4">
+                      Cancelar
+                    </button>
+                  </div>
+
+                  {gameSetup.step === 'config' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <h3 className="text-lg font-bold mb-1 text-slate-900">{match.location}</h3>
-                          <div className="flex items-center gap-3 text-sm text-slate-500">
-                            <span className="flex items-center gap-1"><Calendar className="w-4 h-4 text-primary" /> {match.date}</span>
-                            <span className="flex items-center gap-1"><Clock className="w-4 h-4 text-primary" /> {match.time}</span>
+                          <label className="block text-sm font-medium text-slate-500 mb-1">Número de Times</label>
+                          <input 
+                            type="number" 
+                            value={gameSetup.numTeams}
+                            onChange={(e) => {
+                              const nt = parseInt(e.target.value) || 2;
+                              setGameSetup({ ...gameSetup, numTeams: nt, maxPlayers: nt * 6 });
+                            }}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-4 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-primary" 
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-500 mb-1">Jogadores de Linha (6 potes de {gameSetup.numTeams})</label>
+                          <div className="w-full bg-slate-100 border border-slate-200 rounded-lg px-4 py-2 text-slate-500 font-bold">
+                            {gameSetup.numTeams * 6}
                           </div>
                         </div>
-                        <div className="bg-primary/10 text-primary px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
-                          {match.status === 'open' ? 'Aberto' : 'Finalizado'}
-                        </div>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Users className="w-4 h-4 text-slate-400" />
-                          <span className="text-sm text-slate-500">Limite: {match.max_players} jogadores</span>
+                      <button 
+                        onClick={() => setGameSetup({ ...gameSetup, step: 'selection' })}
+                        className="w-full bg-primary text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/20"
+                      >
+                        Próximo: Selecionar Jogadores
+                      </button>
+                    </div>
+                  )}
+
+                  {gameSetup.step === 'selection' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between text-sm text-slate-500 mb-2">
+                        <div>
+                          <span className="font-bold text-primary">{gameSetup.selectedPlayers.length}</span> / {gameSetup.numTeams * 6} Linha
+                          <span className="mx-2">|</span>
+                          <span className="font-bold text-secondary">{gameSetup.selectedGoalkeepers.length}</span> Goleiros
                         </div>
-                        <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-primary transition-colors" />
+                        <button 
+                          onClick={() => {
+                            const line = users.filter(u => u.position !== 'Goleiro').slice(0, gameSetup.numTeams * 6).map(u => u.id);
+                            const gk = users.filter(u => u.position === 'Goleiro').slice(0, gameSetup.numTeams).map(u => u.id);
+                            setGameSetup({ ...gameSetup, selectedPlayers: line, selectedGoalkeepers: gk });
+                          }}
+                          className="text-primary hover:underline"
+                        >
+                          Auto-Selecionar
+                        </button>
+                      </div>
+                      <div className="max-h-96 overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-50">
+                        {users.map(user => (
+                          <label key={user.id} className="flex items-center p-3 hover:bg-slate-50 cursor-pointer transition-colors">
+                            <input 
+                              type="checkbox"
+                              className="accent-primary mr-3"
+                              checked={user.position === 'Goleiro' ? gameSetup.selectedGoalkeepers.includes(user.id) : gameSetup.selectedPlayers.includes(user.id)}
+                              onChange={(e) => {
+                                if (user.position === 'Goleiro') {
+                                  if (e.target.checked) {
+                                    setGameSetup({ ...gameSetup, selectedGoalkeepers: [...gameSetup.selectedGoalkeepers, user.id] });
+                                  } else {
+                                    setGameSetup({ ...gameSetup, selectedGoalkeepers: gameSetup.selectedGoalkeepers.filter(id => id !== user.id) });
+                                  }
+                                } else {
+                                  if (e.target.checked) {
+                                    if (gameSetup.selectedPlayers.length >= gameSetup.numTeams * 6) {
+                                      alert(`Limite de ${gameSetup.numTeams * 6} jogadores de linha atingido.`);
+                                      return;
+                                    }
+                                    setGameSetup({ ...gameSetup, selectedPlayers: [...gameSetup.selectedPlayers, user.id] });
+                                  } else {
+                                    setGameSetup({ ...gameSetup, selectedPlayers: gameSetup.selectedPlayers.filter(id => id !== user.id) });
+                                  }
+                                }
+                              }}
+                            />
+                            <img src={user.photo_url} className="w-8 h-8 rounded-full mr-3" />
+                            <div className="flex-1">
+                              <div className="text-sm font-bold text-slate-900">{user.nickname}</div>
+                              <div className="text-xs text-slate-500">{user.position} • Nível: {user.level?.toFixed(1) || "-"}</div>
+                            </div>
+                            {user.position === 'Goleiro' && <span className="text-[10px] bg-secondary/10 text-secondary px-2 py-0.5 rounded-full font-bold">GK</span>}
+                          </label>
+                        ))}
+                      </div>
+                      <button 
+                        onClick={calculatePots}
+                        disabled={gameSetup.selectedPlayers.length === 0}
+                        className="w-full bg-primary disabled:opacity-50 text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/20"
+                      >
+                        Definir Potes
+                      </button>
+                    </div>
+                  )}
+
+                  {gameSetup.step === 'pots' && (
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        {gameSetup.pots.map((pot, idx) => (
+                          <div key={idx} className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                            <h4 className="text-[10px] font-bold uppercase text-slate-400 mb-2 flex items-center justify-between">
+                              <span>Pote {idx + 1}</span>
+                              <span className="text-primary">{pot.length} Jogadores</span>
+                            </h4>
+                            <div className="space-y-1">
+                              {pot.map(p => (
+                                <div key={p.id} className="flex items-center gap-2 text-xs">
+                                  <img src={p.photo_url} className="w-4 h-4 rounded-full" />
+                                  <span className="font-medium text-slate-700 truncate">{p.nickname}</span>
+                                  <span className="text-[8px] text-slate-400 ml-auto">{p.level?.toFixed(1)}</span>
+                                </div>
+                              ))}
+                              {pot.length === 0 && <div className="text-[10px] text-slate-300 italic">Vazio</div>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-col gap-3">
+                        <button 
+                          onClick={drawTeams}
+                          className="w-full bg-primary text-white font-bold py-3 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
+                        >
+                          <Users className="w-5 h-5" />
+                          Sortear Automaticamente
+                        </button>
+                        <button 
+                          onClick={startManualDistribution}
+                          className="w-full bg-white border-2 border-primary text-primary font-bold py-3 rounded-xl hover:bg-primary/5 transition-colors flex items-center justify-center gap-2"
+                        >
+                          <UserPlus className="w-5 h-5" />
+                          Dividir Manualmente
+                        </button>
+                        <button 
+                          onClick={() => setGameSetup({ ...gameSetup, step: 'selection' })}
+                          className="w-full text-slate-400 text-sm font-medium hover:underline"
+                        >
+                          Voltar para Seleção
+                        </button>
                       </div>
                     </div>
-                  ))}
+                  )}
+
+                  {gameSetup.step === 'result' && (
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-bold text-slate-900">Times Formados</h4>
+                        <div className="flex gap-2">
+                          <button onClick={calculatePots} className="text-xs text-primary hover:underline font-bold">Ver Potes / Re-sortear</button>
+                          <span className="text-slate-200">|</span>
+                          <button onClick={() => setGameSetup({ ...gameSetup, step: 'selection' })} className="text-xs text-slate-400 hover:underline">Alterar Jogadores</button>
+                        </div>
+                      </div>
+
+                      {/* Unassigned Players (Goalkeepers or manual moves) */}
+                      {(() => {
+                        const assignedIds = gameSetup.teams.flat().map(p => p.id);
+                        const unassigned = users.filter(u => (gameSetup.selectedPlayers.includes(u.id) || gameSetup.selectedGoalkeepers.includes(u.id)) && !assignedIds.includes(u.id));
+                        if (unassigned.length === 0) return null;
+                        return (
+                          <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-4">
+                            <h5 className="text-[10px] font-bold uppercase text-slate-400 mb-2">Jogadores Sem Time</h5>
+                            <div className="flex flex-wrap gap-2">
+                              {unassigned.map(p => (
+                                <div key={p.id} className="bg-white border border-slate-200 rounded-lg p-2 flex items-center gap-2 shadow-sm">
+                                  <img src={p.photo_url} className="w-6 h-6 rounded-full" />
+                                  <span className="text-xs font-bold">{p.nickname}</span>
+                                  <select 
+                                    className="text-[10px] bg-slate-50 border-none outline-none"
+                                    onChange={(e) => movePlayer(p.id, parseInt(e.target.value))}
+                                    value=""
+                                  >
+                                    <option value="" disabled>Mover para...</option>
+                                    {gameSetup.teams.map((_, i) => <option key={i} value={i}>Time {i+1}</option>)}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {gameSetup.teams.map((team, idx) => (
+                          <div key={idx} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                            <div className="bg-slate-50 p-3 border-b border-slate-100 flex items-center justify-between">
+                              <h4 className="font-bold text-primary flex items-center gap-2">
+                                <span>Time {idx + 1}</span>
+                                <span className="text-[10px] bg-primary/10 px-2 py-0.5 rounded-full">
+                                  Média: {(team.reduce((acc, p) => acc + (p.level || 0), 0) / (team.length || 1)).toFixed(1)}
+                                </span>
+                              </h4>
+                              {currentUser.role === 'manager' && (
+                                <button 
+                                  onClick={() => setWinner(idx)}
+                                  className="text-[10px] bg-green-500 text-white px-2 py-1 rounded-md font-bold hover:bg-green-600 transition-colors"
+                                >
+                                  Vencedor da Rodada
+                                </button>
+                              )}
+                            </div>
+                            <div className="divide-y divide-slate-50">
+                              {team.map(player => (
+                                <div key={player.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                  <div className="flex items-center gap-3">
+                                    <img src={player.photo_url} className="w-8 h-8 rounded-full" />
+                                    <div>
+                                      <div className="text-sm font-bold text-slate-900">{player.nickname}</div>
+                                      <div className="text-[10px] text-slate-500">{player.position}</div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-4">
+                                    {(currentUser.role === 'manager' || currentUser.role === 'scout') && (
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex flex-col items-center">
+                                          <span className="text-[8px] uppercase text-slate-400 font-bold">Gols</span>
+                                          <div className="flex items-center gap-1">
+                                            <button onClick={() => updateStats(player.id, 'goals', -1)} className="w-4 h-4 flex items-center justify-center bg-slate-100 rounded text-[10px]">-</button>
+                                            <span className="text-xs font-bold w-4 text-center">{player.goals}</span>
+                                            <button onClick={() => updateStats(player.id, 'goals', 1)} className="w-4 h-4 flex items-center justify-center bg-primary/10 text-primary rounded text-[10px]">+</button>
+                                          </div>
+                                        </div>
+                                        <div className="flex flex-col items-center">
+                                          <span className="text-[8px] uppercase text-slate-400 font-bold">Assis</span>
+                                          <div className="flex items-center gap-1">
+                                            <button onClick={() => updateStats(player.id, 'assists', -1)} className="w-4 h-4 flex items-center justify-center bg-slate-100 rounded text-[10px]">-</button>
+                                            <span className="text-xs font-bold w-4 text-center">{player.assists}</span>
+                                            <button onClick={() => updateStats(player.id, 'assists', 1)} className="w-4 h-4 flex items-center justify-center bg-primary/10 text-primary rounded text-[10px]">+</button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+                                    <select 
+                                      className="text-[10px] bg-slate-50 border-none outline-none p-1 rounded"
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        movePlayer(player.id, val === "none" ? null : parseInt(val));
+                                      }}
+                                      value={idx}
+                                    >
+                                      <option value="none">Remover</option>
+                                      {gameSetup.teams.map((_, i) => <option key={i} value={i}>Time {i+1}</option>)}
+                                    </select>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button 
+                        onClick={() => setGameSetup(null)}
+                        className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl shadow-lg"
+                      >
+                        Finalizar e Fechar Súmula
+                      </button>
+                    </div>
+                  )}
                 </div>
+              ) : (
+                <>
+                  {matches.length === 0 ? (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center shadow-sm">
+                      <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                      <p className="text-slate-500">Nenhuma pelada marcada. Que tal criar uma?</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4">
+                      {matches.map(match => (
+                        <div 
+                          key={match.id}
+                          className="bg-white border border-slate-200 rounded-2xl p-5 hover:border-primary/50 transition-all cursor-pointer group shadow-sm hover:shadow-md"
+                          onClick={() => {
+                            setSelectedMatch(match);
+                            fetchMatchPlayers(match.id);
+                            // No longer going to match-details view
+                          }}
+                        >
+                          <div className="flex justify-between items-start mb-4">
+                            <div>
+                              <h3 className="text-lg font-bold mb-1 text-slate-900">{match.location}</h3>
+                              <div className="flex items-center gap-3 text-sm text-slate-500">
+                                <span className="flex items-center gap-1"><Calendar className="w-4 h-4 text-primary" /> {match.date}</span>
+                                <span className="flex items-center gap-1"><Clock className="w-4 h-4 text-primary" /> {match.time}</span>
+                              </div>
+                            </div>
+                            <div className="bg-primary/10 text-primary px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
+                              {match.status === 'open' ? 'Aberto' : 'Finalizado'}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Users className="w-4 h-4 text-slate-400" />
+                              <span className="text-sm text-slate-500">Limite: {match.max_players} jogadores</span>
+                            </div>
+                            <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-primary transition-colors" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </motion.div>
           )}
@@ -1002,7 +1397,11 @@ export default function App() {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {filteredUsers.map((user, index) => (
-                            <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                            <tr 
+                              key={user.id} 
+                              className="hover:bg-slate-50 transition-colors cursor-pointer"
+                              onClick={() => setViewingProfile(user)}
+                            >
                               <td className="px-6 py-4">
                                 <span className={cn(
                                   "w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold",
@@ -1023,7 +1422,16 @@ export default function App() {
                                 </div>
                               </td>
                               <td className="px-6 py-4 text-sm text-slate-600">{user.position}</td>
-                              <td className="px-6 py-4 text-sm text-slate-600 text-center">{user.match_count || 0}</td>
+                              <td className="px-6 py-4 text-sm text-slate-600 text-center">
+                                <div className="flex flex-col items-center">
+                                  <span className="font-bold">{user.match_count || 0}</span>
+                                  <div className="flex gap-2 text-[8px] uppercase text-slate-400 font-bold">
+                                    <span>{user.goals || 0} G</span>
+                                    <span>{user.assists || 0} A</span>
+                                    <span className="text-primary">{user.wins || 0} V</span>
+                                  </div>
+                                </div>
+                              </td>
                               <td className="px-6 py-4 text-right">
                                 <div className="flex items-center justify-end gap-3">
                                   <div className="flex items-center gap-1 text-primary font-bold">
@@ -1068,6 +1476,9 @@ export default function App() {
                   <img src={currentUser.photo_url} className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-white shadow-xl" />
                   <div className="flex items-center justify-center gap-2 mb-1">
                     <h2 className="text-2xl font-bold text-slate-900">{currentUser.name}</h2>
+                    <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      Nº {currentUser.registration_number || "-"}
+                    </span>
                     {currentUser.role === 'manager' && (
                       <span className="bg-primary/10 text-primary text-[10px] font-bold uppercase px-2 py-0.5 rounded-full">
                         Gestor
@@ -1171,6 +1582,63 @@ export default function App() {
               )}
             </motion.div>
           )}
+          {viewingProfile && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
+              >
+                <div className="relative h-32 bg-primary/10">
+                  <button 
+                    onClick={() => setViewingProfile(null)}
+                    className="absolute top-4 right-4 p-2 bg-white/50 hover:bg-white rounded-full transition-colors"
+                  >
+                    <ChevronRight className="w-5 h-5 rotate-180" />
+                  </button>
+                </div>
+                <div className="px-8 pb-8 -mt-12 text-center">
+                  <img src={viewingProfile.photo_url} className="w-24 h-24 rounded-full mx-auto border-4 border-white shadow-lg mb-4" />
+                  <div className="flex items-center justify-center gap-2 mb-1">
+                    <h3 className="text-2xl font-bold text-slate-900">{viewingProfile.name}</h3>
+                    <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      Nº {viewingProfile.registration_number || "-"}
+                    </span>
+                  </div>
+                  <p className="text-primary font-medium mb-6">@{viewingProfile.nickname}</p>
+
+                  <div className="grid grid-cols-2 gap-3 mb-6">
+                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-wider">Nível Técnico</div>
+                      <div className="text-xl font-bold text-primary flex items-center justify-center gap-1">
+                        <Star className="w-4 h-4 fill-primary" />
+                        {viewingProfile.level?.toFixed(1) || "-"}
+                      </div>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-wider">Posição</div>
+                      <div className="text-sm font-bold text-slate-900">{viewingProfile.position}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-slate-50 p-2 rounded-xl">
+                      <div className="text-[8px] text-slate-400 uppercase font-bold">Gols</div>
+                      <div className="text-lg font-bold text-slate-900">{viewingProfile.goals || 0}</div>
+                    </div>
+                    <div className="bg-slate-50 p-2 rounded-xl">
+                      <div className="text-[8px] text-slate-400 uppercase font-bold">Assis.</div>
+                      <div className="text-lg font-bold text-slate-900">{viewingProfile.assists || 0}</div>
+                    </div>
+                    <div className="bg-slate-50 p-2 rounded-xl border border-primary/20 bg-primary/5">
+                      <div className="text-[8px] text-primary uppercase font-bold">Vitórias</div>
+                      <div className="text-lg font-bold text-primary">{viewingProfile.wins || 0}</div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
         </AnimatePresence>
       </main>
 
@@ -1253,7 +1721,7 @@ export default function App() {
             )}
           >
             <Calendar className="w-6 h-6" />
-            <span className="text-[10px] font-bold uppercase tracking-widest">Jogos</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest">Jogo</span>
           </button>
           
           {currentUser.role === 'manager' && (

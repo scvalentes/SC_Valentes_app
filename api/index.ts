@@ -16,6 +16,26 @@ if (!supabaseUrl || !supabaseServiceKey) {
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+// One-time migration to assign registration numbers to existing users
+async function migrateRegistrationNumbers() {
+  const { data: users, error } = await supabase
+    .from("users")
+    .select("id, registration_number, created_at")
+    .order("created_at", { ascending: true });
+  
+  if (error || !users) return;
+
+  for (let i = 0; i < users.length; i++) {
+    if (!users[i].registration_number) {
+      await supabase
+        .from("users")
+        .update({ registration_number: i + 1 })
+        .eq("id", users[i].id);
+    }
+  }
+}
+migrateRegistrationNumbers();
+
 const app = express();
 app.use(express.json());
 
@@ -37,7 +57,11 @@ app.get("/api/users", async (req, res) => {
     res.json(data.map(u => ({
       ...u,
       match_count: u.match_count?.[0]?.count || 0,
-      rating_count: u.rating_count?.[0]?.count || 0
+      rating_count: u.rating_count?.[0]?.count || 0,
+      goals: u.goals || 0,
+      assists: u.assists || 0,
+      wins: u.wins || 0,
+      registration_number: u.registration_number
     })));
   } catch (e) {
     res.status(500).json({ error: "Erro ao buscar usuários" });
@@ -48,11 +72,24 @@ app.post("/api/users", async (req, res) => {
   const { id, name, username, nickname, position, photo_url, password } = req.body;
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Get the highest registration number to ensure uniqueness and order
+    const { data: lastUser } = await supabase
+      .from("users")
+      .select("registration_number")
+      .order("registration_number", { ascending: false })
+      .limit(1);
+    
+    const lastNum = lastUser && lastUser.length > 0 ? lastUser[0].registration_number : 0;
+    const registration_number = lastNum + 1;
+    
+    // Determine role (first user is manager)
     const { count } = await supabase.from("users").select("*", { count: 'exact', head: true });
     const role = (count === 0) ? 'manager' : 'player';
+
     const { data, error } = await supabase
       .from("users")
-      .insert([{ id, name, username, nickname, position, photo_url, password: hashedPassword, role }])
+      .insert([{ id, name, username, nickname, position, photo_url, password: hashedPassword, role, registration_number }])
       .select().single();
     if (error) throw error;
     res.status(201).json({ ...data, match_count: 0, rating_count: 0 });
@@ -69,7 +106,14 @@ app.post("/api/login", async (req, res) => {
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) return res.status(401).json({ error: "Senha incorreta" });
     const { password: _, ...userWithoutPassword } = user;
-    res.json({ ...userWithoutPassword, match_count: user.match_count?.[0]?.count || 0, rating_count: user.rating_count?.[0]?.count || 0 });
+    res.json({ 
+      ...userWithoutPassword, 
+      match_count: user.match_count?.[0]?.count || 0, 
+      rating_count: user.rating_count?.[0]?.count || 0,
+      goals: user.goals || 0,
+      assists: user.assists || 0,
+      wins: user.wins || 0
+    });
   } catch (e) {
     res.status(500).json({ error: "Erro no servidor" });
   }
@@ -242,6 +286,33 @@ app.post("/api/evaluation/start", async (req, res) => {
 app.post("/api/evaluation/finish", async (req, res) => {
   try {
     await supabase.from("match_players").delete().eq("match_id", "evaluation_session");
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/stats/update", async (req, res) => {
+  const { userId, type, increment } = req.body; // type: 'goals' | 'assists'
+  try {
+    const { data: user } = await supabase.from("users").select(type).eq("id", userId).single();
+    const newValue = (user?.[type] || 0) + increment;
+    const { error } = await supabase.from("users").update({ [type]: newValue }).eq("id", userId);
+    if (error) throw error;
+    res.json({ success: true, newValue });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/stats/winner", async (req, res) => {
+  const { userIds } = req.body;
+  try {
+    for (const uid of userIds) {
+      const { data: user } = await supabase.from("users").select("wins").eq("id", uid).single();
+      const newWins = (user?.wins || 0) + 1;
+      await supabase.from("users").update({ wins: newWins }).eq("id", uid);
+    }
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
