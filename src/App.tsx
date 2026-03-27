@@ -40,7 +40,6 @@ type User = {
   goals: number;
   assists: number;
   wins: number;
-  registration_number: number;
 };
 
 type Match = {
@@ -1530,9 +1529,6 @@ export default function App() {
                   <img src={currentUser.photo_url} className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-white shadow-xl" />
                   <div className="flex items-center justify-center gap-2 mb-1">
                     <h2 className="text-2xl font-bold text-slate-900">{currentUser.name}</h2>
-                    <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      Nº {currentUser.registration_number || "-"}
-                    </span>
                     {currentUser.role === 'manager' && (
                       <span className="bg-primary/10 text-primary text-[10px] font-bold uppercase px-2 py-0.5 rounded-full">
                         Gestor
@@ -1655,9 +1651,6 @@ export default function App() {
                   <img src={viewingProfile.photo_url} className="w-24 h-24 rounded-full mx-auto border-4 border-white shadow-lg mb-4" />
                   <div className="flex items-center justify-center gap-2 mb-1">
                     <h3 className="text-2xl font-bold text-slate-900">{viewingProfile.name}</h3>
-                    <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                      Nº {viewingProfile.registration_number || "-"}
-                    </span>
                   </div>
                   <p className="text-primary font-medium mb-6">@{viewingProfile.nickname}</p>
 

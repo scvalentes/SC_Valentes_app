@@ -17,26 +17,6 @@ if (!supabaseUrl || !supabaseServiceKey) {
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // One-time migration to assign registration numbers to existing users
-async function migrateRegistrationNumbers() {
-  const { data: users, error } = await supabase
-    .from("users")
-    .select("id, registration_number, created_at")
-    .order("created_at", { ascending: true });
-  
-  if (error || !users) return;
-
-  for (let i = 0; i < users.length; i++) {
-    if (!users[i].registration_number) {
-      await supabase
-        .from("users")
-        .update({ registration_number: i + 1 })
-        .eq("id", users[i].id);
-    }
-  }
-}
-
-migrateRegistrationNumbers();
-
 const app = express();
 app.use(express.json());
 
@@ -76,8 +56,7 @@ app.get("/api/users", async (req, res) => {
       rating_count: u.rating_count?.[0]?.count || 0,
       goals: u.goals || 0,
       assists: u.assists || 0,
-      wins: u.wins || 0,
-      registration_number: u.registration_number
+      wins: u.wins || 0
     })));
   } catch (e) {
     res.status(500).json({ error: "Erro ao buscar usuários" });
@@ -89,23 +68,13 @@ app.post("/api/users", async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Get the highest registration number to ensure uniqueness and order
-    const { data: lastUser } = await supabase
-      .from("users")
-      .select("registration_number")
-      .order("registration_number", { ascending: false })
-      .limit(1);
-    
-    const lastNum = lastUser && lastUser.length > 0 ? lastUser[0].registration_number : 0;
-    const registration_number = lastNum + 1;
-    
     // Determine role (first user is manager)
     const { count } = await supabase.from("users").select("*", { count: 'exact', head: true });
     const role = (count === 0) ? 'manager' : 'player';
 
     const { data, error } = await supabase
       .from("users")
-      .insert([{ id, name, username, nickname, position, photo_url, password: hashedPassword, role, registration_number }])
+      .insert([{ id, name, username, nickname, position, photo_url, password: hashedPassword, role }])
       .select().single();
     if (error) throw error;
     res.status(201).json({ ...data, match_count: 0, rating_count: 0 });
