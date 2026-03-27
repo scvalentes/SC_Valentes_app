@@ -1335,7 +1335,7 @@ export default function App() {
                 
                 return (
                   <>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="bg-gradient-to-br from-primary to-primary/80 rounded-2xl p-5 shadow-lg shadow-primary/20 relative overflow-hidden group">
                         <div className="absolute -right-4 -bottom-4 opacity-10 group-hover:scale-110 transition-transform">
                           <Trophy className="w-24 h-24 text-white" />
@@ -1347,14 +1347,44 @@ export default function App() {
                               <img src={filteredUsers[0].photo_url} className="w-10 h-10 rounded-full border-2 border-white/20" />
                               <div>
                                 <div className="font-bold text-white">{filteredUsers[0].nickname}</div>
-                                <div className="text-xs text-white/80 flex items-center gap-1">
-                                  <Star className="w-3 h-3 fill-white" />
-                                  {filteredUsers[0].level !== null && filteredUsers[0].level !== undefined ? filteredUsers[0].level.toFixed(1) : "-"}
+                                <div className="flex flex-col gap-0.5">
+                                  <div className="text-xs text-white/80 flex items-center gap-1">
+                                    <Star className="w-3 h-3 fill-white" />
+                                    {filteredUsers[0].level !== null && filteredUsers[0].level !== undefined ? filteredUsers[0].level.toFixed(1) : "-"}
+                                  </div>
+                                  <div className="text-[10px] text-white/60 flex items-center gap-1">
+                                    <Calendar className="w-2.5 h-2.5" />
+                                    {filteredUsers[0].match_count || 0} partidas
+                                  </div>
                                 </div>
                               </div>
                             </div>
                           ) : (
                             <div className="text-white/70 text-sm">Nenhum jogador</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 relative overflow-hidden group shadow-sm">
+                        <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:scale-110 transition-transform">
+                          <Calendar className="w-24 h-24 text-primary" />
+                        </div>
+                        <div className="relative z-10">
+                          <div className="text-xs font-bold uppercase text-slate-400 mb-2">Mais Ativo</div>
+                          {filteredUsers.length > 0 ? (
+                            (() => {
+                              const mostActive = [...filteredUsers].sort((a, b) => (b.match_count || 0) - (a.match_count || 0))[0];
+                              return (
+                                <div className="flex items-center gap-3">
+                                  <img src={mostActive.photo_url} className="w-10 h-10 rounded-full border-2 border-slate-100" />
+                                  <div>
+                                    <div className="font-bold text-slate-900">{mostActive.nickname}</div>
+                                    <div className="text-xs text-slate-500">{mostActive.match_count || 0} partidas</div>
+                                  </div>
+                                </div>
+                              );
+                            })()
+                          ) : (
+                            <div className="text-slate-400 text-sm">Nenhum jogador</div>
                           )}
                         </div>
                       </div>
@@ -1607,17 +1637,21 @@ export default function App() {
                   </div>
                   <p className="text-primary font-medium mb-6">@{viewingProfile.nickname}</p>
 
-                  <div className="grid grid-cols-2 gap-3 mb-6">
+                  <div className="grid grid-cols-3 gap-3 mb-6">
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
-                      <div className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-wider">Nível Técnico</div>
-                      <div className="text-xl font-bold text-primary flex items-center justify-center gap-1">
-                        <Star className="w-4 h-4 fill-primary" />
+                      <div className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-wider">Nível</div>
+                      <div className="text-lg font-bold text-primary flex items-center justify-center gap-1">
+                        <Star className="w-3.5 h-3.5 fill-primary" />
                         {viewingProfile.level?.toFixed(1) || "-"}
                       </div>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-wider">Partidas</div>
+                      <div className="text-lg font-bold text-slate-900">{viewingProfile.match_count || 0}</div>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
                       <div className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-wider">Posição</div>
-                      <div className="text-sm font-bold text-slate-900">{viewingProfile.position}</div>
+                      <div className="text-xs font-bold text-slate-900 truncate">{viewingProfile.position}</div>
                     </div>
                   </div>
 
