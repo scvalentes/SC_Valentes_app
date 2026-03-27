@@ -48,7 +48,7 @@ type Match = {
   status: string;
 };
 
-type View = "home" | "rankings" | "profile" | "create-match" | "match-details" | "manager-dashboard";
+type View = "home" | "rankings" | "profile" | "create-match" | "evaluation" | "manager-dashboard";
 
 export default function App() {
   const [view, setView] = useState<View>("home");
@@ -66,6 +66,8 @@ export default function App() {
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [authorizedUsers, setAuthorizedUsers] = useState<User[]>([]);
   const [managerTab, setManagerTab] = useState<"requests" | "all-users">("requests");
+  const [selectedForEvaluation, setSelectedForEvaluation] = useState<string[]>([]);
+  const [evaluationPlayers, setEvaluationPlayers] = useState<User[]>([]);
 
   const finishMatch = async (matchId: string) => {
     await fetch(`/api/matches/${matchId}/finish`, { method: "POST" });
@@ -141,6 +143,46 @@ export default function App() {
     }
     fetchData();
   }, []);
+
+  const fetchEvaluationPlayers = async () => {
+    try {
+      const res = await fetch("/api/evaluation/players");
+      const data = await res.json();
+      setEvaluationPlayers(data);
+    } catch (error) {
+      console.error("Error fetching evaluation players:", error);
+    }
+  };
+
+  const startEvaluation = async () => {
+    if (selectedForEvaluation.length === 0) {
+      alert("Selecione pelo menos um jogador para avaliar.");
+      return;
+    }
+    try {
+      await fetch("/api/evaluation/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: selectedForEvaluation })
+      });
+      fetchEvaluationPlayers();
+      setView("evaluation");
+      setSelectedForEvaluation([]);
+    } catch (error) {
+      console.error("Error starting evaluation:", error);
+    }
+  };
+
+  const finishEvaluation = async () => {
+    if (!window.confirm("Deseja finalizar esta sessão de avaliação?")) return;
+    try {
+      await fetch("/api/evaluation/finish", { method: "POST" });
+      setEvaluationPlayers([]);
+      setView("home");
+    } catch (error) {
+      console.error("Error finishing evaluation:", error);
+    }
+  };
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -595,7 +637,7 @@ export default function App() {
                       onClick={() => {
                         setSelectedMatch(match);
                         fetchMatchPlayers(match.id);
-                        setView("match-details");
+                        // No longer going to match-details view
                       }}
                     >
                       <div className="flex justify-between items-start mb-4">
@@ -746,10 +788,37 @@ export default function App() {
                 </div>
               ) : (
                 <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                    <div className="text-sm text-slate-500">
+                      {selectedForEvaluation.length} jogadores selecionados
+                    </div>
+                    <button 
+                      onClick={startEvaluation}
+                      disabled={selectedForEvaluation.length === 0}
+                      className="bg-primary hover:opacity-90 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-lg shadow-primary/20 flex items-center gap-2"
+                    >
+                      <Star className="w-4 h-4" />
+                      Avaliar Selecionados
+                    </button>
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left">
                       <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
                         <tr>
+                          <th className="px-6 py-4 font-medium w-10">
+                            <input 
+                              type="checkbox" 
+                              className="accent-primary"
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedForEvaluation(users.filter(u => u.role !== 'manager').map(u => u.id));
+                                } else {
+                                  setSelectedForEvaluation([]);
+                                }
+                              }}
+                              checked={selectedForEvaluation.length === users.filter(u => u.role !== 'manager').length && users.length > 0}
+                            />
+                          </th>
                           <th className="px-6 py-4 font-medium">Jogador</th>
                           <th className="px-6 py-4 font-medium">Posição</th>
                           <th className="px-6 py-4 font-medium">Cargo</th>
@@ -759,6 +828,22 @@ export default function App() {
                       <tbody className="divide-y divide-slate-100">
                         {users.map(user => (
                           <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-6 py-4">
+                              {user.role !== 'manager' && (
+                                <input 
+                                  type="checkbox" 
+                                  className="accent-primary"
+                                  checked={selectedForEvaluation.includes(user.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedForEvaluation([...selectedForEvaluation, user.id]);
+                                    } else {
+                                      setSelectedForEvaluation(selectedForEvaluation.filter(id => id !== user.id));
+                                    }
+                                  }}
+                                />
+                              )}
+                            </td>
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
                                 <img src={user.photo_url} className="w-8 h-8 rounded-full" />
@@ -1022,210 +1107,68 @@ export default function App() {
             </motion.div>
           )}
 
-          {view === "match-details" && selectedMatch && (
+          {view === "evaluation" && (currentUser.role === 'manager' || currentUser.role === 'scout') && (
             <motion.div 
-              key="details"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
+              key="evaluation"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
               className="space-y-6"
             >
-              <div className="flex items-center gap-4 mb-2">
-                <button onClick={() => setView("home")} className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-600">
-                  <ChevronRight className="w-6 h-6 rotate-180" />
-                </button>
-                <h2 className="text-2xl font-bold text-slate-900">Detalhes da Pelada</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-slate-900">Avaliação de Jogadores</h2>
+                {currentUser.role === 'manager' && (
+                  <button 
+                    onClick={finishEvaluation}
+                    className="text-xs text-secondary hover:underline font-bold"
+                  >
+                    Finalizar Sessão
+                  </button>
+                )}
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <h3 className="text-xl font-bold mb-2 text-slate-900">{selectedMatch.location}</h3>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <Calendar className="w-4 h-4 text-primary" />
-                        <span>{selectedMatch.date}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <Clock className="w-4 h-4 text-primary" />
-                        <span>{selectedMatch.time}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <MapPin className="w-4 h-4 text-primary" />
-                        <span>Ver no mapa</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs text-slate-400 uppercase mb-1">Custo Estimado</div>
-                    <div className="text-xl font-bold text-primary flex items-center gap-1">
-                      <DollarSign className="w-4 h-4" />
-                      15,00
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex gap-3">
-                  {matchPlayers.some(p => p.id === currentUser.id) ? (
-                    (() => {
-                      const player = matchPlayers.find(p => p.id === currentUser.id);
-                      if (player?.match_status === 'pending') {
-                        return (
-                          <div className="flex-1 bg-slate-100 text-slate-500 font-bold py-3 rounded-xl text-center flex items-center justify-center gap-2">
-                            <Clock className="w-5 h-5" />
-                            Solicitação Pendente
-                          </div>
-                        );
-                      }
-                      return (
-                        <div className="flex-1 bg-green-50 text-green-600 font-bold py-3 rounded-xl text-center flex items-center justify-center gap-2">
-                          <CheckCircle2 className="w-5 h-5" />
-                          Você está na lista ({player?.match_status === 'confirmed' ? 'Confirmado' : 'Reserva'})
-                        </div>
-                      );
-                    })()
-                  ) : (
+              {evaluationPlayers.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center shadow-sm">
+                  <Star className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                  <p className="text-slate-500">Nenhum jogador selecionado para avaliação.</p>
+                  {currentUser.role === 'manager' && (
                     <button 
-                      onClick={() => joinMatch(selectedMatch.id)}
-                      className="flex-1 bg-primary hover:opacity-90 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2"
+                      onClick={() => setView("manager-dashboard")}
+                      className="text-primary font-bold mt-4 hover:underline"
                     >
-                      <UserPlus className="w-5 h-5" />
-                      {authorizedUsers.some(u => u.id === currentUser.id) ? "Confirmar Presença" : "Solicitar Participação"}
+                      Ir para o Painel do Gestor
                     </button>
                   )}
-                  <button 
-                    onClick={() => setShowChat(!showChat)}
-                    className={cn(
-                      "p-3 rounded-xl transition-colors",
-                      showChat ? "bg-primary text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-500"
-                    )}
-                  >
-                    <MessageSquare className="w-6 h-6" />
-                  </button>
                 </div>
-
-                {showChat && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden mt-4"
-                  >
-                    <div className="p-4 h-48 overflow-y-auto space-y-3 bg-white/50">
-                      <div className="flex gap-2">
-                        <div className="w-6 h-6 bg-slate-200 rounded-full" />
-                        <div className="bg-slate-100 p-2 rounded-lg rounded-tl-none text-xs text-slate-700">
-                          <span className="font-bold block mb-1">Beto</span>
-                          Bora galera, quem vai levar a bola hoje?
-                        </div>
-                      </div>
-                      <div className="flex gap-2 flex-row-reverse">
-                        <div className="w-6 h-6 bg-primary rounded-full" />
-                        <div className="bg-primary/10 p-2 rounded-lg rounded-tr-none text-xs border border-primary/20 text-primary">
-                          <span className="font-bold block mb-1">Você</span>
-                          Eu levo! Já tá calibrada.
-                        </div>
-                      </div>
-                    </div>
-                    <div className="p-2 border-t border-slate-200 flex gap-2">
-                      <input placeholder="Digite sua mensagem..." className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs outline-none text-slate-900" />
-                      <button className="bg-primary p-1.5 rounded-lg text-white"><ChevronRight className="w-4 h-4" /></button>
-                    </div>
-                  </motion.div>
-                )}
-              </div>
-
-              <div className="space-y-4">
-                <h4 className="font-bold flex items-center justify-between text-slate-900">
-                  <div className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-primary" />
-                    Jogadores Confirmados ({matchPlayers.length}/{selectedMatch.max_players})
-                  </div>
-                  {selectedMatch.status === 'open' && currentUser?.role === 'manager' && (
-                    <button onClick={balanceTeams} className="text-xs text-primary hover:underline">Equilibrar Times</button>
-                  )}
-                </h4>
-
-                {teams && (
-                  <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
-                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                      <h5 className="text-xs font-bold uppercase text-slate-400 mb-3">Time A</h5>
-                      <div className="space-y-2">
-                        {teams.teamA.map(p => (
-                          <div key={p.id} className="flex items-center justify-between text-sm text-slate-700">
-                            <div className="flex items-center gap-2">
-                              <img src={p.photo_url} className="w-6 h-6 rounded-full" />
-                              <span>{p.nickname}</span>
-                            </div>
-                            <div className="flex items-center gap-1 text-primary font-bold text-[10px]">
-                              <Star className="w-2.5 h-2.5 fill-primary" />
-                              {p.level !== null ? p.level.toFixed(1) : "-"}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-                      <h5 className="text-xs font-bold uppercase text-slate-400 mb-3">Time B</h5>
-                      <div className="space-y-2">
-                        {teams.teamB.map(p => (
-                          <div key={p.id} className="flex items-center justify-between text-sm text-slate-700">
-                            <div className="flex items-center gap-2">
-                              <img src={p.photo_url} className="w-6 h-6 rounded-full" />
-                              <span>{p.nickname}</span>
-                            </div>
-                            <div className="flex items-center gap-1 text-primary font-bold text-[10px]">
-                              <Star className="w-2.5 h-2.5 fill-primary" />
-                              {p.level !== null ? p.level.toFixed(1) : "-"}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 gap-2">
-                  {matchPlayers.map(player => (
-                    <div key={player.id} className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between shadow-sm">
-                      <div className="flex items-center gap-3">
-                        <img src={player.photo_url} className="w-8 h-8 rounded-full" />
+              ) : (
+                <div className="grid gap-4">
+                  {evaluationPlayers.map(player => (
+                    <div key={player.id} className="bg-white border border-slate-200 rounded-2xl p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-all">
+                      <div className="flex items-center gap-4">
+                        <img src={player.photo_url} className="w-14 h-14 rounded-full border-2 border-slate-100" />
                         <div>
-                          <div className="font-medium text-sm text-slate-900">{player.nickname}</div>
-                          <div className="text-xs text-slate-500">{player.position}</div>
+                          <div className="font-bold text-lg text-slate-900">{player.nickname}</div>
+                          <div className="text-sm text-slate-500">{player.position}</div>
+                          <div className="flex items-center gap-1 text-primary font-bold text-xs mt-1">
+                            <Star className="w-3.5 h-3.5 fill-primary" />
+                            Nível: {player.level !== null ? player.level.toFixed(1) : "-"}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-1 text-primary font-bold text-xs">
-                          <Star className="w-3 h-3 fill-primary" />
-                          {player.level !== null ? player.level.toFixed(1) : "-"}
-                        </div>
-                        {selectedMatch.status === 'finished' && player.id !== currentUser.id && (currentUser.role === 'scout' || currentUser.role === 'manager') && (
-                          <button 
-                            onClick={() => setRatingTarget(player)}
-                            className="bg-primary/10 text-primary text-[10px] font-bold uppercase px-2 py-1 rounded-md hover:bg-primary/20"
-                          >
-                            Avaliar
-                          </button>
-                        )}
-                        {player.id === currentUser.id && (
-                          <CheckCircle2 className="w-4 h-4 text-primary" />
-                        )}
-                      </div>
+                      <button 
+                        onClick={() => {
+                          setRatingTarget(player);
+                          // We need a match_id for ratings, we'll use 'evaluation_session'
+                          setSelectedMatch({ id: 'evaluation_session' } as any);
+                        }}
+                        className="bg-primary hover:opacity-90 text-white px-6 py-2 rounded-xl font-bold transition-all shadow-lg shadow-primary/20"
+                      >
+                        Avaliar
+                      </button>
                     </div>
                   ))}
-                  {matchPlayers.length === 0 && (
-                    <p className="text-center py-8 text-slate-400 text-sm">Nenhum jogador confirmado ainda.</p>
-                  )}
                 </div>
-
-                {selectedMatch.status === 'open' && matchPlayers.length >= 2 && (
-                  <button 
-                    onClick={() => finishMatch(selectedMatch.id)}
-                    className="w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-3 rounded-xl transition-colors border border-slate-200 mt-4"
-                  >
-                    Finalizar Partida e Avaliar
-                  </button>
-                )}
-              </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1328,6 +1271,22 @@ export default function App() {
                   {pendingRequests.length}
                 </span>
               )}
+            </button>
+          )}
+
+          {(currentUser.role === 'manager' || currentUser.role === 'scout') && (
+            <button 
+              onClick={() => {
+                fetchEvaluationPlayers();
+                setView("evaluation");
+              }}
+              className={cn(
+                "flex-1 flex flex-col items-center gap-1 transition-colors",
+                view === "evaluation" ? "text-primary" : "text-slate-400 hover:text-primary"
+              )}
+            >
+              <Star className="w-6 h-6" />
+              <span className="text-[10px] font-bold uppercase tracking-widest">Avaliar</span>
             </button>
           )}
 

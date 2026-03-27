@@ -182,6 +182,72 @@ app.delete("/api/users/:id", async (req, res) => {
   res.json({ success: true });
 });
 
+// --- ROTAS DE AVALIAÇÃO ---
+
+app.get("/api/evaluation/players", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("match_players")
+      .select(`user:users(id, name, username, nickname, position, level, photo_url)`)
+      .eq("match_id", "evaluation_session");
+    
+    if (error) throw error;
+    res.json(data.map(mp => mp.user));
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao buscar jogadores em avaliação" });
+  }
+});
+
+app.post("/api/evaluation/start", async (req, res) => {
+  const { userIds } = req.body;
+  try {
+    // 1. Ensure the special match exists
+    const { data: match } = await supabase
+      .from("matches")
+      .select("id")
+      .eq("id", "evaluation_session")
+      .single();
+    
+    if (!match) {
+      await supabase.from("matches").insert([{
+        id: "evaluation_session",
+        location: "Sessão de Avaliação",
+        date: new Date().toISOString().split('T')[0],
+        time: "00:00",
+        max_players: 100,
+        status: "open",
+        created_by: "system"
+      }]);
+    }
+
+    // 2. Clear existing players
+    await supabase.from("match_players").delete().eq("match_id", "evaluation_session");
+
+    // 3. Add new players
+    if (userIds && userIds.length > 0) {
+      const inserts = userIds.map((uid: string) => ({
+        match_id: "evaluation_session",
+        user_id: uid,
+        status: "confirmed"
+      }));
+      await supabase.from("match_players").insert(inserts);
+    }
+
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/evaluation/finish", async (req, res) => {
+  try {
+    await supabase.from("match_players").delete().eq("match_id", "evaluation_session");
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- CONFIGURAÇÃO DE AMBIENTE ---
 
 if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
