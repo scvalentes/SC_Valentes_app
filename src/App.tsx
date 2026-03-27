@@ -339,6 +339,21 @@ export default function App() {
     }
   };
 
+  const handleDeleteMatch = async (matchId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("Tem certeza que deseja excluir esta pelada? Esta ação não pode ser desfeita.")) return;
+    
+    try {
+      const res = await fetch(`/api/matches/${matchId}`, { method: "DELETE" });
+      if (res.ok) {
+        fetchData();
+        if (selectedMatch?.id === matchId) setSelectedMatch(null);
+      }
+    } catch (error) {
+      console.error("Error deleting match:", error);
+    }
+  };
+
   const handleSignUp = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setAuthError(null);
@@ -1044,6 +1059,15 @@ export default function App() {
                             <div className="bg-primary/10 text-primary px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
                               {match.status === 'open' ? 'Aberto' : 'Finalizado'}
                             </div>
+                            {currentUser?.role === 'manager' && (
+                              <button 
+                                onClick={(e) => handleDeleteMatch(match.id, e)}
+                                className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                                title="Excluir Pelada"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">

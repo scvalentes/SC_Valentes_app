@@ -193,6 +193,19 @@ app.post("/api/matches/:id/finish", async (req, res) => {
   }
 });
 
+app.delete("/api/matches/:id", async (req, res) => {
+  try {
+    // Delete from all tables that might have foreign keys
+    await supabase.from("ratings").delete().eq("match_id", req.params.id);
+    await supabase.from("match_players").delete().eq("match_id", req.params.id);
+    const { error } = await supabase.from("matches").delete().eq("id", req.params.id);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- ROTAS DO GESTOR ---
 
 app.get("/api/manager/:id/requests", async (req, res) => {
@@ -357,6 +370,34 @@ app.post("/api/stats/winner", async (req, res) => {
       await supabase.from("users").update({ wins: newWins }).eq("id", uid);
     }
     res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/ratings", async (req, res) => {
+  const { id, match_id, rater_id, rated_id, score, comment, is_anonymous } = req.body;
+  try {
+    const { error } = await supabase.from("ratings").insert([{
+      id,
+      match_id,
+      rater_id,
+      rated_id,
+      score,
+      comment,
+      is_anonymous
+    }]);
+    
+    if (error) throw error;
+
+    // Update user average level
+    const { data: ratings } = await supabase.from("ratings").select("score").eq("rated_id", rated_id);
+    if (ratings && ratings.length > 0) {
+      const avg = ratings.reduce((acc, curr) => acc + curr.score, 0) / ratings.length;
+      await supabase.from("users").update({ level: avg }).eq("id", rated_id);
+    }
+
+    res.status(201).json({ success: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
