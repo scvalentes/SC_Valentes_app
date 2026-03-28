@@ -161,6 +161,7 @@ export default function App() {
     try {
       const res = await fetch("/api/evaluation/players");
       const data = await res.json();
+      console.log("Fetched evaluation players:", data);
       setEvaluationPlayers(data);
     } catch (error) {
       console.error("Error fetching evaluation players:", error);
@@ -1229,12 +1230,12 @@ export default function App() {
                               className="accent-primary"
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  setSelectedForEvaluation(users.filter(u => u.role !== 'manager').map(u => u.id));
+                                  setSelectedForEvaluation(users.map(u => u.id));
                                 } else {
                                   setSelectedForEvaluation([]);
                                 }
                               }}
-                              checked={selectedForEvaluation.length === users.filter(u => u.role !== 'manager').length && users.length > 0}
+                              checked={selectedForEvaluation.length === users.length && users.length > 0}
                             />
                           </th>
                           <th className="px-6 py-4 font-medium">Jogador</th>
@@ -1247,20 +1248,18 @@ export default function App() {
                         {users.map(user => (
                           <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4">
-                              {user.role !== 'manager' && (
-                                <input 
-                                  type="checkbox" 
-                                  className="accent-primary"
-                                  checked={selectedForEvaluation.includes(user.id)}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setSelectedForEvaluation([...selectedForEvaluation, user.id]);
-                                    } else {
-                                      setSelectedForEvaluation(selectedForEvaluation.filter(id => id !== user.id));
-                                    }
-                                  }}
-                                />
-                              )}
+                              <input 
+                                type="checkbox" 
+                                className="accent-primary"
+                                checked={selectedForEvaluation.includes(user.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedForEvaluation([...selectedForEvaluation, user.id]);
+                                  } else {
+                                    setSelectedForEvaluation(selectedForEvaluation.filter(id => id !== user.id));
+                                  }
+                                }}
+                              />
                             </td>
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-3">

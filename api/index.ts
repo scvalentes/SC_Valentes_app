@@ -260,25 +260,38 @@ app.get("/api/evaluation/players", async (req, res) => {
       .select(`user:users(id, name, username, nickname, position, level, photo_url)`)
       .eq("match_id", "evaluation_session");
     
-    if (error) throw error;
-    res.json(data.map(mp => mp.user));
-  } catch (e) {
+    if (error) {
+      console.error("Error fetching evaluation players:", error);
+      throw error;
+    }
+    
+    // Filter out null users in case some were deleted or relationship failed
+    const players = data ? data.map(mp => mp.user).filter(u => u !== null) : [];
+    res.json(players);
+  } catch (e: any) {
+    console.error("Server error in /api/evaluation/players:", e);
     res.status(500).json({ error: "Erro ao buscar jogadores em avaliação" });
   }
 });
 
 app.post("/api/evaluation/start", async (req, res) => {
   const { userIds } = req.body;
+  console.log("Starting evaluation for users:", userIds);
   try {
     // 1. Ensure the special match exists
-    const { data: match } = await supabase
+    const { data: match, error: matchError } = await supabase
       .from("matches")
       .select("id")
       .eq("id", "evaluation_session")
-      .single();
+      .maybeSingle();
+    
+    if (matchError) {
+      console.error("Error checking evaluation session match:", matchError);
+    }
     
     if (!match) {
-      await supabase.from("matches").insert([{
+      console.log("Creating evaluation session match...");
+      const { error: insertError } = await supabase.from("matches").insert([{
         id: "evaluation_session",
         location: "Sessão de Avaliação",
         date: new Date().toISOString().split('T')[0],
@@ -287,23 +300,33 @@ app.post("/api/evaluation/start", async (req, res) => {
         status: "open",
         created_by: "system"
       }]);
+      if (insertError) {
+        console.error("Error inserting evaluation session match:", insertError);
+      }
     }
 
     // 2. Clear existing players
+    console.log("Clearing existing evaluation players...");
     await supabase.from("match_players").delete().eq("match_id", "evaluation_session");
 
     // 3. Add new players
     if (userIds && userIds.length > 0) {
+      console.log(`Adding ${userIds.length} players to evaluation...`);
       const inserts = userIds.map((uid: string) => ({
         match_id: "evaluation_session",
         user_id: uid,
         status: "confirmed"
       }));
-      await supabase.from("match_players").insert(inserts);
+      const { error: playersError } = await supabase.from("match_players").insert(inserts);
+      if (playersError) {
+        console.error("Error inserting evaluation players:", playersError);
+        throw playersError;
+      }
     }
 
     res.json({ success: true });
   } catch (e: any) {
+    console.error("Server error in /api/evaluation/start:", e);
     res.status(500).json({ error: e.message });
   }
 });
