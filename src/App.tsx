@@ -81,6 +81,23 @@ export default function App() {
     pots: User[][];
   } | null>(null);
   const [viewingProfile, setViewingProfile] = useState<User | null>(null);
+  const [managerUsers, setManagerUsers] = useState<User[]>([]);
+
+  const resetAllRatings = async () => {
+    if (!window.confirm("ATENÇÃO: Isso apagará TODAS as notas de todos os jogadores e resetará os níveis para zero. Esta ação não pode ser desfeita. Deseja continuar?")) return;
+    
+    try {
+      const res = await fetch("/api/admin/reset-ratings", { method: "POST" });
+      if (res.ok) {
+        alert("Todas as notas foram limpas com sucesso!");
+        fetchData();
+      } else {
+        alert("Erro ao limpar notas.");
+      }
+    } catch (error) {
+      console.error("Error resetting ratings:", error);
+    }
+  };
 
   const finishMatch = async (matchId: string) => {
     await fetch(`/api/matches/${matchId}/finish`, { method: "POST" });
@@ -123,8 +140,7 @@ export default function App() {
       rater_id: currentUser.id,
       rated_id: ratingTarget.id,
       score: parseFloat(formData.get("score") as string),
-      comment: formData.get("comment") as string,
-      is_anonymous: formData.get("is_anonymous") === "on"
+      comment: formData.get("comment") as string
     };
 
     await fetch("/api/ratings", {
@@ -134,6 +150,7 @@ export default function App() {
     });
 
     setRatingTarget(null);
+    fetchEvaluationPlayers(); // Refresh list to update "Reavaliar" status
     fetchData();
   };
 
@@ -157,12 +174,28 @@ export default function App() {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    if (view === "evaluation") {
+      fetchEvaluationPlayers();
+    }
+  }, [view]);
+
   const fetchEvaluationPlayers = async () => {
+    if (!currentUser) return;
     try {
-      const res = await fetch("/api/evaluation/players");
+      const res = await fetch(`/api/evaluation/players?raterId=${currentUser.id}`);
       const data = await res.json();
       console.log("Fetched evaluation players:", data);
-      setEvaluationPlayers(data);
+      
+      // Filter out self and sort: already_rated at the bottom
+      const filteredAndSorted = data
+        .filter((p: any) => p.id !== currentUser.id)
+        .sort((a: any, b: any) => {
+          if (a.already_rated === b.already_rated) return 0;
+          return a.already_rated ? 1 : -1;
+        });
+        
+      setEvaluationPlayers(filteredAndSorted);
     } catch (error) {
       console.error("Error fetching evaluation players:", error);
     }
@@ -332,24 +365,19 @@ export default function App() {
     try {
       const [matchesRes, usersRes] = await Promise.all([
         fetch("/api/matches"),
-        fetch("/api/users")
+        fetch("/api/users?sort=level")
       ]);
       const matchesData = await matchesRes.json();
       const usersData = await usersRes.json();
       setMatches(matchesData);
       setUsers(usersData);
 
-      // Update current user data if logged in
-      if (currentUser) {
-        const updatedUser = usersData.find((u: User) => u.id === currentUser.id);
-        if (updatedUser) {
-          setCurrentUser(updatedUser);
-          localStorage.setItem("pelada_user", JSON.stringify(updatedUser));
-        }
-        
-        if (currentUser.role === 'manager') {
-          fetchManagerData();
-        }
+      // Fetch manager-specific users list (sorted by registration)
+      if (currentUser?.role === 'manager') {
+        const managerUsersRes = await fetch("/api/users?sort=created_at");
+        const managerUsersData = await managerUsersRes.json();
+        setManagerUsers(managerUsersData);
+        fetchManagerData();
       }
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -1198,6 +1226,16 @@ export default function App() {
 
               {managerTab === "requests" ? (
                 <div className="space-y-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-bold text-lg text-slate-900">Solicitações Pendentes</h3>
+                    <button 
+                      onClick={resetAllRatings}
+                      className="text-[10px] font-bold uppercase text-secondary hover:underline flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Limpar Todas as Notas
+                    </button>
+                  </div>
                   {pendingRequests.length === 0 ? (
                     <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center shadow-sm">
                       <UserPlus className="w-12 h-12 text-slate-300 mx-auto mb-4" />
@@ -1259,12 +1297,12 @@ export default function App() {
                               className="accent-primary"
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  setSelectedForEvaluation(users.map(u => u.id));
+                                  setSelectedForEvaluation(managerUsers.map(u => u.id));
                                 } else {
                                   setSelectedForEvaluation([]);
                                 }
                               }}
-                              checked={selectedForEvaluation.length === users.length && users.length > 0}
+                              checked={selectedForEvaluation.length === managerUsers.length && managerUsers.length > 0}
                             />
                           </th>
                           <th className="px-6 py-4 font-medium">Jogador</th>
@@ -1274,7 +1312,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {users.map(user => (
+                        {managerUsers.map(user => (
                           <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4">
                               <input 
@@ -1650,9 +1688,14 @@ export default function App() {
                           // We need a match_id for ratings, we'll use the special evaluation UUID
                           setSelectedMatch({ id: '11111111-1111-1111-1111-111111111111' } as any);
                         }}
-                        className="bg-primary hover:opacity-90 text-white px-6 py-2 rounded-xl font-bold transition-all shadow-lg shadow-primary/20"
+                        className={cn(
+                          "px-6 py-2 rounded-xl font-bold transition-all shadow-lg",
+                          (player as any).already_rated 
+                            ? "bg-slate-200 text-slate-600 shadow-slate-200/20 hover:bg-slate-300" 
+                            : "bg-primary text-white shadow-primary/20 hover:opacity-90"
+                        )}
                       >
-                        Avaliar
+                        {(player as any).already_rated ? "Reavaliar" : "Avaliar"}
                       </button>
                     </div>
                   ))}
@@ -1773,9 +1816,10 @@ export default function App() {
                     placeholder="Ex: Jogou muito, bom espírito esportivo!"
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" name="is_anonymous" id="anon" className="accent-primary" />
-                  <label htmlFor="anon" className="text-sm text-slate-500">Avaliação Anônima</label>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-2">
+                  <p className="text-[10px] text-slate-500 text-center uppercase font-bold tracking-wider">
+                    Esta avaliação é 100% anônima
+                  </p>
                 </div>
                 <button 
                   type="submit"

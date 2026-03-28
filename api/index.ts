@@ -30,10 +30,11 @@ app.use((req, res, next) => {
 
 app.get("/api/users", async (req, res) => {
   try {
+    const sortBy = req.query.sort === 'level' ? 'level' : 'created_at';
     const { data: usersData, error: usersError } = await supabase
       .from("users")
       .select(`*, rating_count:ratings!ratings_rated_id_fkey(count)`)
-      .order("level", { ascending: false, nullsFirst: false });
+      .order(sortBy, { ascending: sortBy === 'created_at', nullsFirst: false });
     
     if (usersError) throw usersError;
 
@@ -251,12 +252,29 @@ app.delete("/api/users/:id", async (req, res) => {
   res.json({ success: true });
 });
 
+app.post("/api/admin/reset-ratings", async (req, res) => {
+  try {
+    // Delete all ratings
+    const { error: deleteError } = await supabase.from("ratings").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    if (deleteError) throw deleteError;
+
+    // Reset all user levels
+    const { error: updateError } = await supabase.from("users").update({ level: null }).neq("id", "00000000-0000-0000-0000-000000000000");
+    if (updateError) throw updateError;
+
+    res.json({ success: true, message: "Todas as notas foram limpas e os níveis resetados." });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const EVALUATION_SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
 // --- ROTAS DE AVALIAÇÃO ---
 
 app.get("/api/evaluation/players", async (req, res) => {
   try {
+    const raterId = req.query.raterId as string;
     console.log(`Fetching evaluation players for session ${EVALUATION_SESSION_ID}...`);
     const { data, error } = await supabase
       .from("match_players")
@@ -268,7 +286,23 @@ app.get("/api/evaluation/players", async (req, res) => {
       throw error;
     }
     
-    const players = data ? data.map(mp => mp.user).filter(u => u !== null) : [];
+    let players = data ? data.map(mp => mp.user).filter(u => u !== null) : [];
+    
+    // If raterId is provided, check which players have already been rated by this user in this session
+    if (raterId) {
+      const { data: myRatings } = await supabase
+        .from("ratings")
+        .select("rated_id")
+        .eq("match_id", EVALUATION_SESSION_ID)
+        .eq("rater_id", raterId);
+      
+      const ratedIds = new Set(myRatings?.map(r => r.rated_id) || []);
+      players = players.map((p: any) => ({
+        ...p,
+        already_rated: ratedIds.has(p.id)
+      }));
+    }
+
     console.log(`Found ${players.length} players for evaluation session`);
     res.json(players);
   } catch (e: any) {
@@ -341,9 +375,50 @@ app.post("/api/evaluation/start", async (req, res) => {
 
 app.post("/api/evaluation/finish", async (req, res) => {
   try {
+    // 1. Get all players that were in this evaluation session
+    const { data: sessionPlayers } = await supabase
+      .from("match_players")
+      .select("user_id")
+      .eq("match_id", EVALUATION_SESSION_ID);
+    
+    if (sessionPlayers && sessionPlayers.length > 0) {
+      const playerIds = sessionPlayers.map(sp => sp.user_id);
+      
+      // 2. For each player, recalculate their average level discarding min/max
+      for (const playerId of playerIds) {
+        const { data: ratings } = await supabase
+          .from("ratings")
+          .select("score")
+          .eq("rated_id", playerId);
+        
+        if (ratings && ratings.length > 0) {
+          const scores = ratings.map(r => r.score);
+          let avg = 0;
+          
+          if (scores.length >= 3) {
+            const sorted = [...scores].sort((a, b) => a - b);
+            // Remove one min and one max
+            const filtered = sorted.slice(1, -1);
+            avg = filtered.reduce((a, b) => a + b, 0) / filtered.length;
+          } else {
+            avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+          }
+          
+          await supabase.from("users").update({ level: avg }).eq("id", playerId);
+        }
+      }
+    }
+
+    // 3. Archive the ratings of this session by changing their match_id
+    // to prevent them from interfering with the "already_rated" check in future sessions
+    const archivedSessionId = `archived-${Date.now()}`;
+    await supabase.from("ratings").update({ match_id: archivedSessionId }).eq("match_id", EVALUATION_SESSION_ID);
+
+    // 4. Clear the session
     await supabase.from("match_players").delete().eq("match_id", EVALUATION_SESSION_ID);
     res.json({ success: true });
   } catch (e: any) {
+    console.error("Error finishing evaluation:", e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -376,8 +451,9 @@ app.post("/api/stats/winner", async (req, res) => {
 });
 
 app.post("/api/ratings", async (req, res) => {
-  const { id, match_id, rater_id, rated_id, score, comment, is_anonymous } = req.body;
+  const { id, match_id, rater_id, rated_id, score, comment } = req.body;
   try {
+    // Always anonymous as per user request
     const { error } = await supabase.from("ratings").insert([{
       id,
       match_id,
@@ -385,18 +461,13 @@ app.post("/api/ratings", async (req, res) => {
       rated_id,
       score,
       comment,
-      is_anonymous
+      is_anonymous: true
     }]);
     
     if (error) throw error;
 
-    // Update user average level
-    const { data: ratings } = await supabase.from("ratings").select("score").eq("rated_id", rated_id);
-    if (ratings && ratings.length > 0) {
-      const avg = ratings.reduce((acc, curr) => acc + curr.score, 0) / ratings.length;
-      await supabase.from("users").update({ level: avg }).eq("id", rated_id);
-    }
-
+    // We no longer update level here. It's updated only when the manager finishes the evaluation session.
+    
     res.status(201).json({ success: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
