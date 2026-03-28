@@ -251,6 +251,8 @@ app.delete("/api/users/:id", async (req, res) => {
   res.json({ success: true });
 });
 
+const EVALUATION_SESSION_ID = "00000000-0000-0000-0000-000000000000";
+
 // --- ROTAS DE AVALIAÇÃO ---
 
 app.get("/api/evaluation/players", async (req, res) => {
@@ -258,15 +260,15 @@ app.get("/api/evaluation/players", async (req, res) => {
     const { data, error } = await supabase
       .from("match_players")
       .select(`user:users(id, name, username, nickname, position, level, photo_url)`)
-      .eq("match_id", "evaluation_session");
+      .eq("match_id", EVALUATION_SESSION_ID);
     
     if (error) {
       console.error("Error fetching evaluation players:", error);
       throw error;
     }
     
-    // Filter out null users in case some were deleted or relationship failed
     const players = data ? data.map(mp => mp.user).filter(u => u !== null) : [];
+    console.log(`Found ${players.length} players for evaluation session`);
     res.json(players);
   } catch (e: any) {
     console.error("Server error in /api/evaluation/players:", e);
@@ -282,7 +284,7 @@ app.post("/api/evaluation/start", async (req, res) => {
     const { data: match, error: matchError } = await supabase
       .from("matches")
       .select("id")
-      .eq("id", "evaluation_session")
+      .eq("id", EVALUATION_SESSION_ID)
       .maybeSingle();
     
     if (matchError) {
@@ -290,9 +292,9 @@ app.post("/api/evaluation/start", async (req, res) => {
     }
     
     if (!match) {
-      console.log("Creating evaluation session match...");
+      console.log("Creating evaluation session match with UUID...");
       const { error: insertError } = await supabase.from("matches").insert([{
-        id: "evaluation_session",
+        id: EVALUATION_SESSION_ID,
         location: "Sessão de Avaliação",
         date: new Date().toISOString().split('T')[0],
         time: "00:00",
@@ -302,18 +304,20 @@ app.post("/api/evaluation/start", async (req, res) => {
       }]);
       if (insertError) {
         console.error("Error inserting evaluation session match:", insertError);
+        // If it fails because of ID format, we might need to handle it, 
+        // but 00000000-0000-0000-0000-000000000000 is a valid UUID.
       }
     }
 
     // 2. Clear existing players
     console.log("Clearing existing evaluation players...");
-    await supabase.from("match_players").delete().eq("match_id", "evaluation_session");
+    await supabase.from("match_players").delete().eq("match_id", EVALUATION_SESSION_ID);
 
     // 3. Add new players
     if (userIds && userIds.length > 0) {
       console.log(`Adding ${userIds.length} players to evaluation...`);
       const inserts = userIds.map((uid: string) => ({
-        match_id: "evaluation_session",
+        match_id: EVALUATION_SESSION_ID,
         user_id: uid,
         status: "confirmed"
       }));
@@ -333,7 +337,7 @@ app.post("/api/evaluation/start", async (req, res) => {
 
 app.post("/api/evaluation/finish", async (req, res) => {
   try {
-    await supabase.from("match_players").delete().eq("match_id", "evaluation_session");
+    await supabase.from("match_players").delete().eq("match_id", EVALUATION_SESSION_ID);
     res.json({ success: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

@@ -1618,8 +1618,8 @@ export default function App() {
                       <button 
                         onClick={() => {
                           setRatingTarget(player);
-                          // We need a match_id for ratings, we'll use 'evaluation_session'
-                          setSelectedMatch({ id: 'evaluation_session' } as any);
+                          // We need a match_id for ratings, we'll use the special evaluation UUID
+                          setSelectedMatch({ id: '00000000-0000-0000-0000-000000000000' } as any);
                         }}
                         className="bg-primary hover:opacity-90 text-white px-6 py-2 rounded-xl font-bold transition-all shadow-lg shadow-primary/20"
                       >
