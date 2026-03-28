@@ -177,7 +177,10 @@ export default function App() {
       await fetch("/api/evaluation/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userIds: selectedForEvaluation })
+        body: JSON.stringify({ 
+          userIds: selectedForEvaluation,
+          userId: currentUser?.id 
+        })
       });
       fetchEvaluationPlayers();
       setView("evaluation");
@@ -261,6 +264,20 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, type, increment })
       });
+      
+      // Update local gameSetup state if it exists
+      if (gameSetup) {
+        const newTeams = gameSetup.teams.map(team => 
+          team.map(player => {
+            if (player.id === userId) {
+              return { ...player, [type]: (player[type] || 0) + increment };
+            }
+            return player;
+          })
+        );
+        setGameSetup({ ...gameSetup, teams: newTeams });
+      }
+      
       fetchData();
     } catch (error) {
       console.error("Error updating stats:", error);
@@ -278,6 +295,18 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userIds: winnerIds })
       });
+      
+      // Update local gameSetup state
+      const newTeams = gameSetup.teams.map((team, idx) => 
+        team.map(player => {
+          if (idx === teamIdx) {
+            return { ...player, wins: (player.wins || 0) + 1 };
+          }
+          return player;
+        })
+      );
+      setGameSetup({ ...gameSetup, teams: newTeams });
+      
       alert("Vitória contabilizada para todos os jogadores do time!");
       fetchData();
     } catch (error) {
@@ -1619,7 +1648,7 @@ export default function App() {
                         onClick={() => {
                           setRatingTarget(player);
                           // We need a match_id for ratings, we'll use the special evaluation UUID
-                          setSelectedMatch({ id: '00000000-0000-0000-0000-000000000000' } as any);
+                          setSelectedMatch({ id: '11111111-1111-1111-1111-111111111111' } as any);
                         }}
                         className="bg-primary hover:opacity-90 text-white px-6 py-2 rounded-xl font-bold transition-all shadow-lg shadow-primary/20"
                       >

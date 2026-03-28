@@ -251,19 +251,20 @@ app.delete("/api/users/:id", async (req, res) => {
   res.json({ success: true });
 });
 
-const EVALUATION_SESSION_ID = "00000000-0000-0000-0000-000000000000";
+const EVALUATION_SESSION_ID = "11111111-1111-1111-1111-111111111111";
 
 // --- ROTAS DE AVALIAÇÃO ---
 
 app.get("/api/evaluation/players", async (req, res) => {
   try {
+    console.log(`Fetching evaluation players for session ${EVALUATION_SESSION_ID}...`);
     const { data, error } = await supabase
       .from("match_players")
       .select(`user:users(id, name, username, nickname, position, level, photo_url)`)
       .eq("match_id", EVALUATION_SESSION_ID);
     
     if (error) {
-      console.error("Error fetching evaluation players:", error);
+      console.error("Error fetching evaluation players from Supabase:", error);
       throw error;
     }
     
@@ -277,8 +278,8 @@ app.get("/api/evaluation/players", async (req, res) => {
 });
 
 app.post("/api/evaluation/start", async (req, res) => {
-  const { userIds } = req.body;
-  console.log("Starting evaluation for users:", userIds);
+  const { userIds, userId } = req.body;
+  console.log("Starting evaluation for users:", userIds, "by manager:", userId);
   try {
     // 1. Ensure the special match exists
     const { data: match, error: matchError } = await supabase
@@ -300,18 +301,21 @@ app.post("/api/evaluation/start", async (req, res) => {
         time: "00:00",
         max_players: 100,
         status: "open",
-        created_by: "system"
+        created_by: userId || userIds[0] // Use a valid UUID
       }]);
       if (insertError) {
         console.error("Error inserting evaluation session match:", insertError);
-        // If it fails because of ID format, we might need to handle it, 
-        // but 00000000-0000-0000-0000-000000000000 is a valid UUID.
+        throw insertError;
       }
     }
 
     // 2. Clear existing players
     console.log("Clearing existing evaluation players...");
-    await supabase.from("match_players").delete().eq("match_id", EVALUATION_SESSION_ID);
+    const { error: deleteError } = await supabase.from("match_players").delete().eq("match_id", EVALUATION_SESSION_ID);
+    if (deleteError) {
+      console.error("Error clearing existing evaluation players:", deleteError);
+      throw deleteError;
+    }
 
     // 3. Add new players
     if (userIds && userIds.length > 0) {
