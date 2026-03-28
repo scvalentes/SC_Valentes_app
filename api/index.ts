@@ -7,14 +7,14 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL || "";
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+// Tenta usar Service Role Key primeiro, depois Anon Key como fallback
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || "";
 
-if (!supabaseUrl || !supabaseServiceKey) {
-  console.error("⚠️ ERRO DE CONFIGURAÇÃO: As variáveis SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY não foram encontradas no ambiente.");
-  console.log("👉 Para corrigir: Vá em Settings (ícone de engrenagem) > Environment Variables e adicione as chaves do Supabase.");
+if (!supabaseUrl || !supabaseKey) {
+  console.error("⚠️ ERRO DE CONFIGURAÇÃO: As variáveis SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY não foram encontradas no ambiente.");
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // One-time migration to assign registration numbers to existing users
 const app = express();
@@ -292,14 +292,15 @@ app.get("/api/evaluation/players", async (req, res) => {
     if (raterId) {
       const { data: myRatings } = await supabase
         .from("ratings")
-        .select("rated_id")
+        .select("rated_id, score")
         .eq("match_id", EVALUATION_SESSION_ID)
         .eq("rater_id", raterId);
       
-      const ratedIds = new Set(myRatings?.map(r => r.rated_id) || []);
+      const ratingMap = new Map(myRatings?.map(r => [r.rated_id, r.score]) || []);
       players = players.map((p: any) => ({
         ...p,
-        already_rated: ratedIds.has(p.id)
+        already_rated: ratingMap.has(p.id),
+        my_rating: ratingMap.get(p.id) || null
       }));
     }
 
@@ -426,27 +427,46 @@ app.post("/api/evaluation/finish", async (req, res) => {
 app.post("/api/stats/update", async (req, res) => {
   const { userId, type, increment } = req.body; // type: 'goals' | 'assists'
   try {
-    const { data: user } = await supabase.from("users").select(type).eq("id", userId).single();
-    const newValue = (user?.[type] || 0) + increment;
-    const { error } = await supabase.from("users").update({ [type]: newValue }).eq("id", userId);
-    if (error) throw error;
+    const { data: user, error: fetchError } = await supabase.from("users").select(type).eq("id", userId).single();
+    if (fetchError) throw fetchError;
+    
+    const newValue = Math.max(0, (user?.[type as keyof typeof user] || 0) + (increment || 0));
+    const { error: updateError } = await supabase.from("users").update({ [type]: newValue }).eq("id", userId);
+    if (updateError) throw updateError;
+    
     res.json({ success: true, newValue });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error("Error in /api/stats/update:", e);
+    res.status(500).json({ error: e.message || "Erro interno ao atualizar estatísticas" });
   }
 });
 
 app.post("/api/stats/winner", async (req, res) => {
   const { userIds } = req.body;
   try {
+    const errors = [];
     for (const uid of userIds) {
-      const { data: user } = await supabase.from("users").select("wins").eq("id", uid).single();
+      const { data: user, error: fetchError } = await supabase.from("users").select("wins").eq("id", uid).single();
+      if (fetchError) {
+        errors.push(`Fetch error for ${uid}: ${fetchError.message}`);
+        continue;
+      }
+      
       const newWins = (user?.wins || 0) + 1;
-      await supabase.from("users").update({ wins: newWins }).eq("id", uid);
+      const { error: updateError } = await supabase.from("users").update({ wins: newWins }).eq("id", uid);
+      if (updateError) {
+        errors.push(`Update error for ${uid}: ${updateError.message}`);
+      }
     }
-    res.json({ success: true });
+    
+    if (errors.length > 0) {
+      res.status(207).json({ success: false, errors });
+    } else {
+      res.json({ success: true });
+    }
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error("Error in /api/stats/winner:", e);
+    res.status(500).json({ error: e.message || "Erro interno ao registrar vitórias" });
   }
 });
 

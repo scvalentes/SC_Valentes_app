@@ -40,6 +40,8 @@ type User = {
   goals: number;
   assists: number;
   wins: number;
+  already_rated?: boolean;
+  my_rating?: number | null;
 };
 
 type Match = {
@@ -292,18 +294,23 @@ export default function App() {
 
   const updateStats = async (userId: string, type: 'goals' | 'assists', increment: number) => {
     try {
-      await fetch("/api/stats/update", {
+      const response = await fetch("/api/stats/update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, type, increment })
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Erro ao atualizar estatísticas");
+      }
       
       // Update local gameSetup state if it exists
       if (gameSetup) {
         const newTeams = gameSetup.teams.map(team => 
           team.map(player => {
             if (player.id === userId) {
-              return { ...player, [type]: (player[type] || 0) + increment };
+              return { ...player, [type]: Math.max(0, (player[type] || 0) + increment) };
             }
             return player;
           })
@@ -312,22 +319,27 @@ export default function App() {
       }
       
       fetchData();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error updating stats:", error);
+      alert(`Erro: ${error.message}`);
     }
   };
 
   const setWinner = async (teamIdx: number) => {
     if (!gameSetup) return;
-    if (!window.confirm(`Confirmar Time ${teamIdx + 1} como vencedor da rodada?`)) return;
     
     const winnerIds = gameSetup.teams[teamIdx].map(u => u.id);
     try {
-      await fetch("/api/stats/winner", {
+      const response = await fetch("/api/stats/winner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userIds: winnerIds })
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Erro ao definir vencedor");
+      }
       
       // Update local gameSetup state
       const newTeams = gameSetup.teams.map((team, idx) => 
@@ -342,8 +354,9 @@ export default function App() {
       
       alert("Vitória contabilizada para todos os jogadores do time!");
       fetchData();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error setting winner:", error);
+      alert(`Erro: ${error.message}`);
     }
   };
 
@@ -1680,6 +1693,11 @@ export default function App() {
                             <Star className="w-3.5 h-3.5 fill-primary" />
                             Nível: {player.level !== null ? player.level.toFixed(1) : "-"}
                           </div>
+                          {player.already_rated && (
+                            <div className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold mt-1 inline-block">
+                              Sua nota: {player.my_rating}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <button 
@@ -1690,12 +1708,12 @@ export default function App() {
                         }}
                         className={cn(
                           "px-6 py-2 rounded-xl font-bold transition-all shadow-lg",
-                          (player as any).already_rated 
+                          player.already_rated 
                             ? "bg-slate-200 text-slate-600 shadow-slate-200/20 hover:bg-slate-300" 
                             : "bg-primary text-white shadow-primary/20 hover:opacity-90"
                         )}
                       >
-                        {(player as any).already_rated ? "Reavaliar" : "Avaliar"}
+                        {player.already_rated ? "Reavaliar" : "Avaliar"}
                       </button>
                     </div>
                   ))}
